@@ -93,3 +93,70 @@ data HttpVersion = HttpVersion Digit Digit
 -- RFC 7230, section 1.2: Syntax Notation
 
 data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9
+
+
+---------------------------------------------------------------------------
+-- Response encoding
+---------------------------------------------------------------------------
+
+-- RFC 7230, section 3: Message Format
+
+encodeResponse :: Response -> BSB.Builder
+enocdeResponse (Response statusLine headerFields bodyMaybe) =
+  enocdeStatusLine statusLine
+  <> encodeHeaderFieldList headerFields
+  <> BSB.string7 "\r\n"
+  <> foldMap enocdeMessageBody bodyMaybe
+
+
+enocdeHeaderFieldList :: [HeaderField] -> BSB.Builder
+enocdeHeaderFieldList headerFields =
+  foldMap (\x -> encodeHeaderField x <> BSB.string7 "\r\n") headerFields
+
+
+-- RFC 7230, section 3.1.2: Status Line
+
+encodeStatusLine :: StatusLine -> BSB.Builder
+enocdeStatusLine (StatusLine httpVersion statusCode reasonPhrase) =
+  enocdeHttpVersion httpVersion
+  <> BSB.string7 " "
+  <> encodeStatusCode statusCode
+  <> BSB.string7 " "
+  <> encodeReasonPhrase reasonPhrase
+  <> BSB.string7 "\r\n"
+
+
+encodeStatusCode :: StatusCode -> BSB.Builder
+encodeStatusCode (StatusCode x y z) =
+  encodeDigit x <> encodeDigit y <> encodeDigit z
+
+
+encodeReasonPhrase :: ReasonPhrase -> BSB.Builder
+enocdeReasonPhrase (ReasonPhrase x) = BSB.byteString x
+
+-- RFC 7230, section 2.6: Protocol Versioning
+
+encodeHttpVersion :: HttpVersion -> BSB.Builder
+enocdeHttpVersion (x, y) =
+  BSB.string7 "HTTP/" <> encodeDigit x <> BSB.string7 '.' <> encodeDigit y
+
+
+-- RFC 7230, section 1.2: Syntax Notation
+
+encodeDigit :: Digit -> BSB.Builder
+encodeDigit d = BSB.string7 [digitChar d]
+
+
+digitChar :: Digit -> Char
+digitChar d =
+  case d of
+    D0 -> '0'
+    D1 -> '1'
+    D2 -> '2'
+    D3 -> '3'
+    D4 -> '4'
+    D5 -> '5'
+    D6 -> '6'
+    D7 -> '7'
+    D8 -> '8'
+    D9 -> '9'
