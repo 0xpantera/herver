@@ -45,3 +45,51 @@ asciiLines xs =
 sayHello :: Socket -> IO ()
 sayHello socket =
   Socket.sendAll socket helloResponse_byteString
+
+-----------------------------------------------------------------------------
+-- HTTP types
+-----------------------------------------------------------------------------
+
+-- RFC 7230, section 3: Message Format
+
+data Request = Request RequestLine [HeaderField] (Maybe MessageBody)
+
+data Response = Response StatusLine [HeaderField] (Maybe MessageBody)
+
+-- RFC 7230, section 3.1.1: Request Line
+
+data RequestLine = RequestLine Method RequestTarget HttpVersion
+
+newtype Method = Method BS.ByteString
+
+-- RFC 7230, section 5.3: Request Target
+
+newtype RequestTarget = RequestTarget BS.ByteString
+
+-- RFC 7230, section 3.1.2: Status Line
+
+data StatusLine = StatusLine HttpVersion StatusCode ReasonPhrase
+
+data StatusCode = StatusCode Digit Digit Digit
+
+newtype ReasonPhrase = ReasonPhrase BS.ByteString
+
+-- RFC 7230, section 3.2: Header Fields
+
+newtype FieldName = FieldName BS.ByteString
+
+newtype FieldValue = FieldValue BS.ByteString
+
+data HeaderField = HeaderField FieldName FieldValue
+
+-- RFC 7230, section 3.3: Message Body
+
+newtype MessageBody = MessageBody LBS.ByteString
+
+-- RFC 7230, section 2.6: Protocol Versioning
+
+data HttpVersion = HttpVersion Digit Digit
+
+-- RFC 7230, section 1.2: Syntax Notation
+
+data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9
