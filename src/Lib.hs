@@ -106,7 +106,7 @@ enocdeResponse (Response statusLine headerFields bodyMaybe) =
   enocdeStatusLine statusLine
   <> encodeHeaderFieldList headerFields
   <> BSB.string7 "\r\n"
-  <> foldMap enocdeMessageBody bodyMaybe
+  <> foldMap encodeMessageBody bodyMaybe
 
 
 enocdeHeaderFieldList :: [HeaderField] -> BSB.Builder
@@ -132,12 +132,12 @@ encodeStatusCode (StatusCode x y z) =
 
 
 encodeReasonPhrase :: ReasonPhrase -> BSB.Builder
-enocdeReasonPhrase (ReasonPhrase x) = BSB.byteString x
+encodeReasonPhrase (ReasonPhrase x) = BSB.byteString x
 
 -- RFC 7230, section 2.6: Protocol Versioning
 
 encodeHttpVersion :: HttpVersion -> BSB.Builder
-enocdeHttpVersion (x, y) =
+encodeHttpVersion (x, y) =
   BSB.string7 "HTTP/" <> encodeDigit x <> BSB.string7 '.' <> encodeDigit y
 
 
@@ -160,3 +160,14 @@ digitChar d =
     D7 -> '7'
     D8 -> '8'
     D9 -> '9'
+
+-- RFC 7230, section 3.2: Header Fields
+
+encodeHeaderField :: HeaderField -> BSB.Builder
+encodeHeaderField
+  (HeaderField (FieldName x) (FieldValue y)) =
+  BSB.byteString x <> BSB.string7 ": " <> BSB.byteString y
+
+
+encodeMessageBody :: MessageBody -> BSB.Builder
+encodeMessageBody (MessageBody x) = BSB.lazyByteString x
