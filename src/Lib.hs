@@ -102,7 +102,7 @@ data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9
 -- RFC 7230, section 3: Message Format
 
 encodeResponse :: Response -> BSB.Builder
-enocdeResponse (Response statusLine headerFields bodyMaybe) =
+encodeResponse (Response statusLine headerFields bodyMaybe) =
   enocdeStatusLine statusLine
   <> encodeHeaderFieldList headerFields
   <> BSB.string7 "\r\n"
@@ -117,8 +117,8 @@ enocdeHeaderFieldList headerFields =
 -- RFC 7230, section 3.1.2: Status Line
 
 encodeStatusLine :: StatusLine -> BSB.Builder
-enocdeStatusLine (StatusLine httpVersion statusCode reasonPhrase) =
-  enocdeHttpVersion httpVersion
+encodeStatusLine (StatusLine httpVersion statusCode reasonPhrase) =
+  encodeHttpVersion httpVersion
   <> BSB.string7 " "
   <> encodeStatusCode statusCode
   <> BSB.string7 " "
@@ -137,8 +137,11 @@ encodeReasonPhrase (ReasonPhrase x) = BSB.byteString x
 -- RFC 7230, section 2.6: Protocol Versioning
 
 encodeHttpVersion :: HttpVersion -> BSB.Builder
-encodeHttpVersion (x, y) =
-  BSB.string7 "HTTP/" <> encodeDigit x <> BSB.string7 '.' <> encodeDigit y
+encodeHttpVersion (HttpVersion x y) =
+  BSB.string7 "HTTP/"
+  <> encodeDigit x
+  <> BSB.string7 "."
+  <> encodeDigit y
 
 
 -- RFC 7230, section 1.2: Syntax Notation
