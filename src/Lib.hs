@@ -20,12 +20,6 @@ import qualified Network.Socket.ByteString.Lazy as LSocket
 -- network-simple
 import qualified Network.Simple.TCP as NS
 
-
-server :: (Socket -> IO ()) -> IO a
-server f =
-  NS.serve NS.HostAny "8000" $ \(socket, _socektAddress) ->
-                                 f socket
-
                                  
 helloResponse_byteString :: BS.ByteString
 helloResponse_byteString =
@@ -103,14 +97,14 @@ data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9
 
 encodeResponse :: Response -> BSB.Builder
 encodeResponse (Response statusLine headerFields bodyMaybe) =
-  enocdeStatusLine statusLine
+  encodeStatusLine statusLine
   <> encodeHeaderFieldList headerFields
   <> BSB.string7 "\r\n"
   <> foldMap encodeMessageBody bodyMaybe
 
 
-enocdeHeaderFieldList :: [HeaderField] -> BSB.Builder
-enocdeHeaderFieldList headerFields =
+encodeHeaderFieldList :: [HeaderField] -> BSB.Builder
+encodeHeaderFieldList headerFields =
   foldMap (\x -> encodeHeaderField x <> BSB.string7 "\r\n") headerFields
 
 
@@ -174,3 +168,63 @@ encodeHeaderField
 
 encodeMessageBody :: MessageBody -> BSB.Builder
 encodeMessageBody (MessageBody x) = BSB.lazyByteString x
+
+
+-------------------------------------------------------------------------
+-- Construct and use Responses
+-------------------------------------------------------------------------
+
+
+server :: (Socket -> IO ()) -> IO a
+server f =
+  NS.serve NS.HostAny "8000" $ \(socket, _socektAddress) ->
+                                 f socket
+
+
+staticResponseServer :: Response -> IO ()
+staticResponseServer response =
+  server $ \socket ->
+             LSocket.sendAll socket
+             (BSB.toLazyByteString
+              (encodeResponse response))
+
+
+helloResponse_withMoreTypes :: Response
+helloResponse_withMoreTypes = Response statusLine [hf1, hf2] (Just messageBody)
+  where
+    statusLine   = StatusLine httpVersion statusCode reasonPhrase
+    httpVersion  = HttpVersion D1 D1
+    statusCode   = StatusCode D2 D0 D0
+    reasonPhrase = ReasonPhrase $ ASCII.pack "OK"
+    hf1           = HeaderField
+                       (FieldName $ ASCII.pack "Content-Type")
+                       (FieldValue $ ASCII.pack "text/plain; charset=us-ascii")
+    hf2          = HeaderField
+                       (FieldName $ ASCII.pack "Content-Length")
+                       (FieldValue $ ASCII.pack "7")
+    messageBody  = MessageBody $ LASCII.pack "Hello!\n"
+                  
+                  
+                  
+        
+
+
+
+
+
+
+
+
+
+--  Response
+-- (StatusLine
+--      (HttpVersion Digit 1 Digit 1)
+--      (StatusCode Digit 2 Digit 0 Digit 0)
+--      ReasonPhrase BSB.byteString "OK")
+--  [(HeaderField
+--      FieldName BSB.byteString "Content-Type"
+--      FieldValue BSB.byteString "text/plain; charset=us-ascii")
+--   (HeaderField
+--      FieldName BSB.byteString "Content-Length"
+--      FieldValue BSB.byteString "7")]
+--   Just $ MessageBody "Hello!\n"
