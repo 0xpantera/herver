@@ -196,7 +196,7 @@ helloResponse_withMoreTypes = Response statusLine [hf1, hf2] (Just messageBody)
     httpVersion  = HttpVersion D1 D1
     statusCode   = StatusCode D2 D0 D0
     reasonPhrase = ReasonPhrase $ ASCII.pack "OK"
-    hf1           = HeaderField
+    hf1          = HeaderField
                        (FieldName $ ASCII.pack "Content-Type")
                        (FieldValue $ ASCII.pack "text/plain; charset=us-ascii")
     hf2          = HeaderField
@@ -205,26 +205,16 @@ helloResponse_withMoreTypes = Response statusLine [hf1, hf2] (Just messageBody)
     messageBody  = MessageBody $ LASCII.pack "Hello!\n"
                   
                   
-                  
-        
+http_1_1 :: HttpVersion
+http_1_1 = HttpVersion D1 D1
+
+
+status200 :: StatusCode
+status200 = StatusCode D2 D0 D0
+
+
+reasonOK :: ReasonPhrase
+reasonOK = ReasonPhrase $ ASCII.pack "OK"
 
 
 
-
-
-
-
-
-
---  Response
--- (StatusLine
---      (HttpVersion Digit 1 Digit 1)
---      (StatusCode Digit 2 Digit 0 Digit 0)
---      ReasonPhrase BSB.byteString "OK")
---  [(HeaderField
---      FieldName BSB.byteString "Content-Type"
---      FieldValue BSB.byteString "text/plain; charset=us-ascii")
---   (HeaderField
---      FieldName BSB.byteString "Content-Length"
---      FieldValue BSB.byteString "7")]
---   Just $ MessageBody "Hello!\n"
