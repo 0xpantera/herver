@@ -4,6 +4,7 @@ module Lib where
 
 -- base
 import qualified Data.List as List
+import           Numeric   (showInt)
 
 -- bytestring
 import qualified Data.ByteString as BS
@@ -216,5 +217,37 @@ status200 = StatusCode D2 D0 D0
 reasonOK :: ReasonPhrase
 reasonOK = ReasonPhrase $ ASCII.pack "OK"
 
+
+contentTypeHeader :: String -> HeaderField
+contentTypeHeader contentType =
+  HeaderField
+      (FieldName $ ASCII.pack "Content-type")
+      (FieldValue $ ASCII.pack contentType)
+
+
+plainTextAsciiHeader :: HeaderField
+plainTextAsciiHeader =
+  contentTypeHeader "text/plain; charset=us-ascii"
+
+
+contentLengthHeader :: Integral a => a -> HeaderField
+contentLengthHeader contentLength =
+  HeaderField
+      (FieldName $ ASCII.pack "Content-Length")
+      (FieldValue $ ASCII.pack $ showInt contentLength "")
+
+
+asciiMessageBody :: String -> MessageBody
+asciiMessageBody x =
+  MessageBody $ LASCII.pack x
+
+
+helloResponse_moreConveniently :: Response
+helloResponse_moreConveniently = Response statusLine [hf1, hf2] (Just messageBody)
+  where
+    statusLine  = StatusLine http_1_1 status200 reasonOK
+    hf1         = plainTextAsciiHeader
+    hf2         = contentLengthHeader (7 :: Integer)
+    messageBody = asciiMessageBody "Hello!\n"
 
 
