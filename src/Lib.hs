@@ -1,9 +1,12 @@
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wall -fno-warn-unused-imports #-}
 
 module Lib where
 
 -- base
+import qualified Data.Char as Char
 import qualified Data.List as List
+import           Data.Word (Word8)
 import           Numeric   (showInt)
 
 -- bytestring
@@ -13,6 +16,10 @@ import qualified Data.ByteString.Char8 as ASCII
 import qualified Data.ByteString.Lazy.Char8 as LASCII
 import qualified Data.ByteString.Builder as BSB
 
+-- contravariant
+import Data.Functor.Contravariant
+  (Equivalence (..), contramap, defaultEquivalence)
+  
 -- network
 import Network.Socket (Socket)
 import qualified Network.Socket.ByteString as Socket
@@ -251,3 +258,63 @@ helloResponse_moreConveniently = Response statusLine [hf1, hf2] (Just messageBod
     messageBody = asciiMessageBody "Hello!\n"
 
 
+----------------------------------------------------------------------------------
+-- Content length
+----------------------------------------------------------------------------------
+
+alterHeader :: (Maybe FieldValue -> Maybe FieldValue)
+            -> FieldName
+            -> [HeaderField] -> [HeaderField]
+alterHeader f name headerFields =
+  case headerFields of
+    [] ->
+      case (f Nothing) of
+        Nothing -> []
+        Just y  -> [HeaderField name y]
+
+    (HeaderField x y : xys) | x ~= name ->
+      case (f (Just y)) of
+        Nothing -> xys
+        Just y' -> HeaderField name y' : xys
+
+    (xy : xys) ->
+      xy : alterHeader f name xys
+
+  where
+    (~=) :: FieldName -> FieldName -> Bool
+    a ~= b = getEquivalence fieldNameEquivalence a b
+
+
+fieldNameEquivalence :: Equivalence FieldName
+fieldNameEquivalence =
+  contramap f (defaultEquivalence @String)
+  where
+    f :: FieldName -> String
+    f (FieldName x) = Char.toLower <$> ASCII.unpack x
+
+
+setContentLengthHeader :: Response -> Response
+setContentLengthHeader (Response statusLine headerFields bodyMaybe) =
+  Response statusLine headerFields' bodyMaybe
+  where
+    headerFields' = alterHeader f name headerFields
+    name = FieldName (ASCII.pack "Content-Length")
+    f :: Maybe FieldValue -> Maybe FieldValue
+    f _ =
+      case bodyMaybe of
+        Nothing -> Nothing
+        Just (MessageBody lbs) ->
+          Just (FieldValue (ASCII.pack (showInt (LBS.length lbs) "")))
+
+
+helloResponse_base :: Response
+helloResponse_base = Response statusLine [h1] (Just messageBody)
+  where
+    statusLine  = StatusLine http_1_1 status200 reasonOK
+    h1          = plainTextAsciiHeader
+    messageBody = asciiMessageBody "Hello!\n"
+    
+
+helloResponse_withContentLength :: Response
+helloResponse_withContentLength =
+  setContentLengthHeader helloResponse_base
