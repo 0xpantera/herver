@@ -24,6 +24,7 @@ dependencies:
 - bytestring
 - network
 - network-simple >= 0.4.2
+- contravariant
 
 library:
   source-dirs: src
