@@ -318,3 +318,13 @@ helloResponse_base = Response statusLine [h1] (Just messageBody)
 helloResponse_withContentLength :: Response
 helloResponse_withContentLength =
   setContentLengthHeader helloResponse_base
+
+
+showResponseASCII :: Response -> String
+showResponseASCII response =
+  LASCII.unpack (BSB.toLazyByteString (encodeResponse response))
+
+
+printResponseASCII :: Response -> IO ()
+printResponseASCII response =
+  putStrLn (showResponseASCII response)
