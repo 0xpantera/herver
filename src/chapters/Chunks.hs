@@ -37,3 +37,10 @@ digitsOnly :: T.Text -> T.Text
 digitsOnly s = T.pack $ filter isDigit $ T.unpack s
   where
     isDigit = \c -> c `elem` ['0'..'9']
+
+
+capitalizeLast :: T.Text -> T.Text
+capitalizeLast s = (T.init s) <> upperLast s
+  where
+    upperLast = (T.toUpper . T.singleton . T.last)
+
