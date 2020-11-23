@@ -1,5 +1,5 @@
-{-# LANGUAGE TypeApplications #-}
-module Chunks where
+
+module Chapters.Chunks (forChunks_) where
 
 import Control.Monad
 import System.IO
