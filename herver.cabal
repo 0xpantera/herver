@@ -1,0 +1,33 @@
+cabal-version:      3.0
+name:               herver
+version:            0.0.0.0
+synopsis:           HTTP server implementation in Haskell
+
+-- A longer description of the package.
+-- description:
+homepage:           https://github.com/0xpantera/herver
+
+-- A URL where users can report bugs.
+-- bug-reports:
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             0xpantera
+maintainer:         0xpantera@proton.me
+
+-- A copyright notice.
+-- copyright:
+category:           Network
+extra-source-files:
+    ChangeLog.md
+    README.md
+
+common base
+    default-language: GHC2021
+    default-extensions: BlockArguments DerivingVia NoImplicitPrelude QuasiQuotes
+    ghc-options: -Wall -fdefer-typed-holes
+    build-depends: sockets-and-pipes ^>= 1.0
+
+library
+    import: base
+    hs-source-dirs: library
+    exposed-modules: Herver
