@@ -293,3 +293,7 @@ resolve serviceName hostName = do
     case addrInfos of
         [] -> fail "getAddrInfo returned []"
         x : _ -> return x
+
+line :: ByteString -> ByteString
+line x = x <> fromString "\r\n"
+
