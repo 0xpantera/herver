@@ -12,10 +12,19 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Char as Char
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 
 import Network.Socket (Socket)
 import qualified Network.Socket as S
 import qualified Network.Socket.ByteString as S
+
+import Network.Simple.TCP (serve, HostPreference (..))
+import qualified Network.Simple.TCP as Net
+
+import ASCII (ASCII)
+import ASCII.Decimal (Digit (..))
+import qualified ASCII as A
+import qualified ASCII.Char as A
 
 
 getDataDir :: IO FilePath
@@ -295,5 +304,104 @@ resolve serviceName hostName = do
         x : _ -> return x
 
 line :: ByteString -> ByteString
-line x = x <> fromString "\r\n"
+line x = x <> A.fromCharList crlf
 
+helloReqStr :: ByteString
+helloReqStr =
+    line [A.string|GET /hello.txt HTTP/1.1|] <>
+    line [A.string|User-Agent: curl/7.64.1|] <>
+    line [A.string|"Accept-Language: en, mi"|] <>
+    line [A.string||]
+
+crlf :: [A.Char]
+crlf = [A.CarriageReturn, A.LineFeed]
+
+helloResponseString :: ByteString
+helloResponseString =
+    line [A.string|HTTP/1.1 200 OK|] <>
+    line [A.string|Content-Type: text/plain; charset=us-ascii|] <>
+    line [A.string|Content-Length: 6|] <>
+    line [A.string||] <>
+    [A.string|Hello!|]
+
+fstServer :: IO a
+fstServer = serve @IO HostAny "8000" \(s, a) -> do
+    putStrLn ("New connection from " <> show a)
+    Net.send s helloResponseString
+
+-- Exercise 15 - Repeat until nothing
+-- Define a function similar to 
+-- repeatUntil :: Monad m => m chunk -> (chunk -> bool) -> (chunk -> m ()) -> m ()
+-- using `Maybe` instead of a predicate to specify how far the reptition should go
+repeatUntilNothing :: Monad m => m (Maybe chunk) -> (chunk -> m ()) -> m ()
+repeatUntilNothing getChunk f = proceed
+    where
+        proceed = do
+            chunk <- getChunk
+            case chunk of
+                Nothing -> pure ()
+                Just chunk' -> do { f chunk'; proceed }
+
+-- Exercise 16 - Make an HTTP request
+mkHaskellWebReq :: IO ()
+mkHaskellWebReq = runResourceT @IO do
+    addrInfos <- liftIO $ resolve "http" "www.haskell.org"
+    (_, s) <- openAndConnect addrInfos
+    liftIO $ Net.send s haskellReqStr
+    liftIO $ repeatUntilNothing (Net.recv s 1_024) BS.putStr
+
+
+haskellReqStr :: ByteString
+haskellReqStr =
+    line [A.string|GET / HTTP/1.1|] <>
+    line [A.string|Host: haskell.org|] <>
+    line [A.string|Connection: close|] <>
+    line [A.string||]    
+
+
+data Request = Request RequestLine [Field] (Maybe Body)
+data Response = Response StatusLine [Field] (Maybe Body)
+
+data RequestLine = RequestLine Method RequestTarget Version
+data Method = Method (ASCII ByteString)
+data RequestTarget = RequestTarget (ASCII ByteString)
+data Version = Version Digit Digit
+
+data StatusLine = StatusLine Version StatusCode (Maybe ReasonPhrase)
+data StatusCode = StatusCode Digit Digit Digit
+data ReasonPhrase = ReasonPhrase (ASCII ByteString)
+
+data Field = Field FieldName FieldValue
+data FieldName = FieldName (ASCII ByteString)
+data FieldValue = FieldValue (ASCII ByteString)
+
+data Body = Body LByteString
+
+helloRequest :: Request
+helloRequest = Request start [host, lang] Nothing
+    where
+        start = RequestLine 
+            (Method [A.string|GET|]) 
+            (RequestTarget [A.string|/hello.txt|])
+            (Version Digit1 Digit1)
+        host = Field 
+            (FieldName [A.string|Host|])
+            (FieldValue [A.string|www.example.com|])
+        lang = Field
+            (FieldName [A.string|Accept-Language|])
+            (FieldValue [A.string|en, mi|])
+
+helloResponse :: Response
+helloResponse = Response start [typ, len] (Just body)
+    where
+        start = StatusLine
+            (Version Digit1 Digit1)
+            (StatusCode Digit2 Digit0 Digit0)
+            (Just $ ReasonPhrase [A.string|OK|])
+        typ = Field
+            (FieldName [A.string|Content-Type|])
+            (FieldValue [A.string|text/plain; charset=us-ascii|])
+        len = Field
+            (FieldName [A.string|Content-Length|])
+            (FieldValue [A.string|6|])
+        body = Body [A.string|Hello!|]
