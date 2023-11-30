@@ -4,14 +4,18 @@ import Relude
 import qualified System.Directory as Dir
 import System.FilePath ((</>))
 
+import qualified Data.Time as Time
 import qualified System.IO as IO
 import Control.Exception.Safe (tryAny)
 import Control.Monad.Trans.Resource (ReleaseKey, ResourceT, allocate, runResourceT)
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import qualified Data.Text.Lazy as LT
+import qualified Data.Text.Lazy.Builder as TB
 import qualified Data.Char as Char
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BSB
 import qualified Data.ByteString.Lazy as LBS
 
 import Network.Socket (Socket)
@@ -405,3 +409,85 @@ helloResponse = Response start [typ, len] (Just body)
             (FieldName [A.string|Content-Length|])
             (FieldValue [A.string|6|])
         body = Body [A.string|Hello!|]
+
+sayHelloBuilder :: Text -> Text
+sayHelloBuilder name = LT.toStrict $ TB.toLazyText $
+    TB.fromString "Hello " <> TB.fromText name <> TB.fromString "!"
+
+time :: IO () -> IO ()
+time action = do
+    a <- Time.getCurrentTime
+    action
+    b <- Time.getCurrentTime
+    print (Time.diffUTCTime b a)
+
+concatWithStrict :: Int -> Text
+concatWithStrict nTimes = fold $ replicate nTimes $ T.pack "a"
+
+concatWithBuilder :: Int -> Text
+concatWithBuilder nTimes = LT.toStrict $ TB.toLazyText $
+    fold $ replicate nTimes $ TB.fromString "a"
+
+concatSpeedTest :: Int -> IO ()
+concatSpeedTest n = do
+    dir <- getDataDir
+    time $ T.writeFile (dir </> "strict.txt") (concatWithStrict n)
+    time $ T.writeFile (dir </> "builder.txt") (concatWithBuilder n)
+
+encodeLineEnd :: BSB.Builder
+encodeLineEnd = A.fromCharList crlf
+
+encodeRequest :: Request -> BSB.Builder
+encodeRequest (Request reqLine fields bodyMaybe) =
+    encodeRequestLine reqLine
+    <> repeatedlyEncode (\x -> encodeField x <> encodeLineEnd) fields
+    <> encodeLineEnd
+    <> optionallyEncode encodeBody bodyMaybe
+
+encodeResponse :: Response -> BSB.Builder
+encodeResponse (Response statLine fields bodyMaybe) =
+    encodeStatusLine statLine    
+    <> repeatedlyEncode (\x -> encodeField x <> encodeLineEnd) fields
+    <> encodeLineEnd
+    <> optionallyEncode encodeBody bodyMaybe
+
+repeatedlyEncode :: (a -> BSB.Builder) -> [a] -> BSB.Builder
+repeatedlyEncode = foldMap
+
+optionallyEncode :: (a -> BSB.Builder) -> Maybe a -> BSB.Builder
+optionallyEncode = foldMap 
+
+encodeRequestLine :: RequestLine -> BSB.Builder
+encodeRequestLine (RequestLine method target version) =
+    encodeMethod method <> A.fromCharList [A.Space]
+    <> encodeRequestTarget target <> A.fromCharList [A.Space]
+    <> encodeVersion version <> encodeLineEnd
+
+encodeMethod :: Method -> BSB.Builder
+encodeMethod (Method x) = BSB.byteString (A.lift x)
+
+encodeRequestTarget :: RequestTarget -> BSB.Builder
+encodeRequestTarget (RequestTarget x) = BSB.byteString (A.lift x)
+
+encodeVersion :: Version -> BSB.Builder
+encodeVersion (Version x y) =
+    [A.string|HTTP/|] <> A.fromDigitList [x] <> [A.string|.|] <> A.fromDigitList [y]
+
+encodeStatusLine :: StatusLine -> BSB.Builder
+encodeStatusLine (StatusLine version code reason) =
+    encodeVersion version <> A.fromCharList [A.Space] <> encodeStatusCode code <>
+    A.fromCharList [A.Space] <> optionallyEncode encodeReasonPhrase reason <>
+    encodeLineEnd
+
+encodeStatusCode :: StatusCode -> BSB.Builder
+encodeStatusCode (StatusCode x y z) = A.fromDigitList [x, y, z]
+
+encodeReasonPhrase :: ReasonPhrase -> BSB.Builder
+encodeReasonPhrase (ReasonPhrase x) = BSB.byteString (A.lift x)
+
+encodeField :: Field -> BSB.Builder
+encodeField (Field (FieldName x) (FieldValue y)) =
+    BSB.byteString (A.lift x) <> A.fromCharList [A.Colon, A.Space] <> BSB.byteString (A.lift y)
+
+encodeBody :: Body -> BSB.Builder
+encodeBody (Body x) = BSB.lazyByteString x
