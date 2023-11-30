@@ -381,6 +381,8 @@ data FieldValue = FieldValue (ASCII ByteString)
 
 data Body = Body LByteString
 
+data Status = Status StatusCode (Maybe ReasonPhrase)
+
 helloRequest :: Request
 helloRequest = Request start [host, lang] Nothing
     where
@@ -491,3 +493,48 @@ encodeField (Field (FieldName x) (FieldValue y)) =
 
 encodeBody :: Body -> BSB.Builder
 encodeBody (Body x) = BSB.lazyByteString x
+
+
+countHelloAscii :: Natural -> ASCII LByteString
+countHelloAscii count = [A.string|Hello!|] <> A.fromCharList crlf <> case count of
+    0 -> [A.string|This page has never been viewed|]
+    1 -> [A.string|This page has been viewed 1 time.|]
+    _ -> [A.string|This page has been viewed |] <>
+        A.showIntegralDecimal count <> [A.string| times.|]
+
+ok :: Status
+ok = Status (StatusCode Digit2 Digit0 Digit0) (Just (ReasonPhrase [A.string|OK|]))
+
+status :: Status -> StatusLine
+status (Status code phrase) = StatusLine http_1_1 code phrase
+
+http_1_1 :: Version
+http_1_1 = Version Digit1 Digit1
+
+contentType :: FieldName
+contentType = FieldName [A.string|Content-Type|]
+
+plainAscii :: FieldValue
+plainAscii = FieldValue [A.string|text/plain; charset=us-ascii|]
+
+contentLength :: FieldName
+contentLength = FieldName [A.string|Content-Length|]
+
+asciiOk :: ASCII LByteString -> Response
+asciiOk str = Response (status ok) [typ, len] (Just body)
+    where
+        typ = Field contentType plainAscii
+        len = Field contentLength (bodyLengthValue body)
+        body = Body (A.lift str)
+
+bodyLengthValue :: Body -> FieldValue
+bodyLengthValue (Body x) = FieldValue (A.showIntegralDecimal (LBS.length x))
+
+sendResponse :: Socket -> Response -> IO ()
+sendResponse s r = Net.sendLazy s $ BSB.toLazyByteString (encodeResponse r)
+
+
+stuckCountingServer :: IO ()
+stuckCountingServer = serve @IO HostAny "8000" \(s, _) -> do
+    let count = 0 --to-do
+    sendResponse s (asciiOk (countHelloAscii count))
