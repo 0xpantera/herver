@@ -313,8 +313,8 @@ line x = x <> A.fromCharList crlf
 helloReqStr :: ByteString
 helloReqStr =
     line [A.string|GET /hello.txt HTTP/1.1|] <>
-    line [A.string|User-Agent: curl/7.64.1|] <>
-    line [A.string|"Accept-Language: en, mi"|] <>
+    line [A.string|Host: www.example.com|] <>
+    line [A.string|Accept-Language: en, mi|] <>
     line [A.string||]
 
 crlf :: [A.Char]
