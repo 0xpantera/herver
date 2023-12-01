@@ -31,3 +31,4 @@ library
     import: base
     hs-source-dirs: library
     exposed-modules: Herver
+    other-modules: Scratch
