@@ -40,28 +40,8 @@ repeatUntil getChunk isEnd f = proceed
 line :: ByteString -> ByteString
 line x = x <> A.fromCharList crlf
 
-helloReqStr :: ByteString
-helloReqStr =
-    line [A.string|GET /hello.txt HTTP/1.1|] <>
-    line [A.string|Host: www.example.com|] <>
-    line [A.string|Accept-Language: en, mi|] <>
-    line [A.string||]
-
 crlf :: [A.Char]
 crlf = [A.CarriageReturn, A.LineFeed]
-
-helloResponseString :: ByteString
-helloResponseString =
-    line [A.string|HTTP/1.1 200 OK|] <>
-    line [A.string|Content-Type: text/plain; charset=us-ascii|] <>
-    line [A.string|Content-Length: 6|] <>
-    line [A.string||] <>
-    [A.string|Hello!|]
-
-fstServer :: IO a
-fstServer = serve @IO HostAny "8000" \(s, a) -> do
-    putStrLn ("New connection from " <> show a)
-    Net.send s helloResponseString
 
 
 data Request = Request RequestLine [Field] (Maybe Body)
@@ -112,10 +92,6 @@ helloResponse = Response start [typ, len] (Just body)
             (FieldName [A.string|Content-Length|])
             (FieldValue [A.string|6|])
         body = Body [A.string|Hello!|]
-
-sayHelloBuilder :: Text -> Text
-sayHelloBuilder name = LT.toStrict $ TB.toLazyText $
-    TB.fromString "Hello " <> TB.fromText name <> TB.fromString "!"
 
 encodeLineEnd :: BSB.Builder
 encodeLineEnd = A.fromCharList crlf
@@ -175,7 +151,6 @@ encodeField (Field (FieldName x) (FieldValue y)) =
 encodeBody :: Body -> BSB.Builder
 encodeBody (Body x) = BSB.lazyByteString x
 
-
 countHelloAscii :: Natural -> ASCII LByteString
 countHelloAscii count = [A.string|Hello!|] <> A.fromCharList crlf <> case count of
     0 -> [A.string|This page has never been viewed|]
@@ -214,12 +189,6 @@ bodyLengthValue (Body x) = FieldValue (A.showIntegralDecimal (LBS.length x))
 sendResponse :: Socket -> Response -> IO ()
 sendResponse s r = Net.sendLazy s $ BSB.toLazyByteString (encodeResponse r)
 
-
-stuckCountingServer :: IO ()
-stuckCountingServer = serve @IO HostAny "8000" \(s, _) -> do
-    let count = 0 --to-do
-    sendResponse s (asciiOk (countHelloAscii count))
-
 plainUtf8 :: FieldValue
 plainUtf8 = FieldValue [A.string|text/plain; charset=utf-8|]
 
@@ -250,3 +219,22 @@ stuckCountingServerText :: IO ()
 stuckCountingServerText = serve @IO HostAny "8000" \(s, _) -> do
     let count = 0
     sendResponse s (textOk (countHelloText count))
+
+stuckCountingServer :: IO ()
+stuckCountingServer = serve @IO HostAny "8000" \(s, _) -> do
+    let count = 0 --to-do
+    sendResponse s (asciiOk (countHelloAscii count))    
+
+countingServer :: IO ()
+countingServer = do
+    hitCounter <- atomically (newTVar @Natural 0)
+    serve @IO HostAny "8000" \(s, _) -> do
+        count <- atomically $ increment hitCounter
+        sendResponse s (textOk (countHelloText count))
+
+increment :: TVar Natural -> STM Natural
+increment hitCounter = do
+    oldCount <- readTVar hitCounter
+    let newCount = oldCount + 1
+    writeTVar hitCounter newCount
+    return newCount

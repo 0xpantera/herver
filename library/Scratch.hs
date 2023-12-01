@@ -15,6 +15,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Builder as TB
+import qualified Data.Text.Lazy.Builder.Int as TB
 import qualified Data.Time as Time
 
 
@@ -22,9 +23,19 @@ import Network.Socket (Socket)
 import qualified Network.Socket as S
 import qualified Network.Socket.ByteString as S
 import qualified Network.Simple.TCP as Net
+import Network.Simple.TCP (serve, HostPreference (..))
 
 import qualified ASCII as A
 import qualified ASCII.Char as A
+
+import Text.Blaze.Html (Html, toHtml)
+import Text.Blaze.Html.Renderer.Utf8 (renderHtml)
+import qualified Text.Blaze.Html5 as HTML
+
+import qualified Data.Aeson as J
+import qualified Data.Aeson.Key as J.Key
+import qualified Data.Aeson.KeyMap as J.KeyMap
+import Data.Aeson (ToJSON (toJSON), (.=))
 
 
 getDataDir :: IO FilePath
@@ -252,7 +263,10 @@ exampleBytes = [104, 101, 108, 108, 111]
 -- Write a function that converts any lowercase characters in
 -- ASCII-encoded string to uppercase.
 asciiUpper :: ByteString -> ByteString
-asciiUpper = BS.map \x -> if (x >= 97 && x <= 122) then (x - 32) else x
+asciiUpper = BS.map \x -> 
+    if x >= 97 && x <= 122
+        then x - 32
+        else x
 
 
 mkFriendAddrInfo :: S.AddrInfo -> IO ()
@@ -355,4 +369,63 @@ concatSpeedTest :: Int -> IO ()
 concatSpeedTest n = do
     dir <- getDataDir
     time $ T.writeFile (dir </> "strict.txt") (concatWithStrict n)
-    time $ T.writeFile (dir </> "builder.txt") (concatWithBuilder n)    
+    time $ T.writeFile (dir </> "builder.txt") (concatWithBuilder n)
+
+
+helloReqStr :: ByteString
+helloReqStr =
+    line [A.string|GET /hello.txt HTTP/1.1|] <>
+    line [A.string|Host: www.example.com|] <>
+    line [A.string|Accept-Language: en, mi|] <>
+    line [A.string||]
+
+helloResponseString :: ByteString
+helloResponseString =
+    line [A.string|HTTP/1.1 200 OK|] <>
+    line [A.string|Content-Type: text/plain; charset=us-ascii|] <>
+    line [A.string|Content-Length: 6|] <>
+    line [A.string||] <>
+    [A.string|Hello!|]
+
+
+fstServer :: IO a
+fstServer = serve @IO HostAny "8000" \(s, a) -> do
+    putStrLn ("New connection from " <> show a)
+    Net.send s helloResponseString
+
+sayHelloBuilder :: Text -> Text
+sayHelloBuilder name = LT.toStrict $ TB.toLazyText $
+    TB.fromString "Hello " <> TB.fromText name <> TB.fromString "!"
+
+countHelloHtml :: Natural -> Html
+countHelloHtml count = HTML.docType <> htmlDocument
+    where
+        htmlDocument = HTML.html $ documentMetadata <> documentBody
+
+        documentMetadata = HTML.head titleHtml
+        titleHtml = HTML.title (toHtml "My great web page")
+
+        documentBody = HTML.body $ greetingHtml <> HTML.hr <> hitCounterHtml
+        greetingHtml = HTML.p (toHtml "Hello! \9835")
+        hitCounterHtml = HTML.p $ case count of
+            0 -> toHtml "This page has never been viewed."
+            1 -> toHtml "This page has been viewed 1 time."
+            _ -> toHtml "This page has been viewed " <>
+                 toHtml @Natural count <> toHtml " times."
+
+
+countHelloJson :: Natural -> J.Value
+countHelloJson count = J.object [
+    fromString "greeting" .= fromString @Text "Hello! \9835",
+    fromString "hits" .= J.object [
+        fromString "count" .= count,
+        fromString "message" .= countHelloText count ] ]
+
+countHelloText :: Natural -> LText
+countHelloText count = TB.toLazyText $
+    TB.fromString "Hello \9835\r\n" <>
+    case count of
+        0 -> TB.fromString "This page has never been viewed."
+        1 -> TB.fromString "This page has been viewed 1 time."
+        _ -> TB.fromString "This page has been viewed " <>
+             TB.decimal count <> TB.fromString " times."
