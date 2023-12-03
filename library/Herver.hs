@@ -19,6 +19,8 @@ import ASCII.Decimal (Digit (..))
 import qualified ASCII as A
 import qualified ASCII.Char as A
 
+import qualified Control.Concurrent.Async as Async
+import qualified Data.Time as Time
 
 
 -- Exercise 8 - Beyond IO
@@ -238,3 +240,31 @@ increment hitCounter = do
     let newCount = oldCount + 1
     writeTVar hitCounter newCount
     return newCount
+
+incrementNotAtomic :: TVar Natural -> IO Natural
+incrementNotAtomic x = do
+    oldCount <- readTVarIO x
+    return (oldCount + 1)
+
+testIncrement :: (TVar Natural -> IO a) -> IO Natural
+testIncrement inc = do
+    x <- atomically (newTVar @Natural 0)
+    Async.replicateConcurrently_ 10 (replicateM 1_000 (inc x))
+    atomically (readTVar x)
+
+timingServer :: IO ()
+timingServer = do
+    timeVar <- atomically $ newTVar @(Maybe Time.UTCTime) Nothing
+    serve @IO HostAny "8000" \(s, _) -> do
+        now <- Time.getCurrentTime
+        diff <- atomically $ updateTime timeVar now
+        sendResponse s $ textOk $ show diff
+
+updateTime ::
+    TVar (Maybe Time.UTCTime)
+    -> Time.UTCTime
+    -> STM (Maybe Time.NominalDiffTime)
+updateTime timeVar now = do
+    previousTimeMaybe <- readTVar timeVar
+    writeTVar timeVar (Just now)
+    return $ Time.diffUTCTime now <$> previousTimeMaybe
