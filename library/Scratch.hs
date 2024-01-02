@@ -429,3 +429,9 @@ countHelloText count = TB.toLazyText $
         1 -> TB.fromString "This page has been viewed 1 time."
         _ -> TB.fromString "This page has been viewed " <>
              TB.decimal count <> TB.fromString " times."
+
+exampleHexNumbers :: [Text]
+exampleHexNumbers = map hex [0 .. 32]
+    where
+        hex :: Natural -> Text
+        hex = A.showIntegralHexadecimal A.LowerCase             

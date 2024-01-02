@@ -2,13 +2,20 @@ module Herver where
 
 import Relude
 
+import Control.Monad.Trans.Resource (ReleaseKey, ResourceT, allocate, runResourceT)
+
+import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Builder as TB
 import qualified Data.Text.Lazy.Builder.Int as TB
 import qualified Data.Text.Lazy.Encoding as LT
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BSB
 import qualified Data.ByteString.Lazy as LBS
 
+import System.FilePath ((</>))
+import qualified System.IO as IO
+import qualified System.Directory as Dir
 import Network.Socket (Socket)
 
 import Network.Simple.TCP (serve, HostPreference (..))
@@ -21,6 +28,16 @@ import qualified ASCII.Char as A
 
 import qualified Control.Concurrent.Async as Async
 import qualified Data.Time as Time
+
+
+getDataDir :: IO FilePath
+getDataDir = do
+    dir <- Dir.getXdgDirectory Dir.XdgData "sockets-and-pipes"
+    Dir.createDirectoryIfMissing True dir
+    pure dir
+
+binaryFileResource :: FilePath -> IOMode -> ResourceT IO (ReleaseKey, Handle)
+binaryFileResource path mode = allocate (IO.openBinaryFile path mode) IO.hClose
 
 
 -- Exercise 8 - Beyond IO
@@ -150,6 +167,11 @@ encodeField :: Field -> BSB.Builder
 encodeField (Field (FieldName x) (FieldValue y)) =
     BSB.byteString (A.lift x) <> A.fromCharList [A.Colon, A.Space] <> BSB.byteString (A.lift y)
 
+encodeFieldList :: [Field] -> BSB.Builder
+encodeFieldList xs =
+    repeatedlyEncode (\x -> encodeField x <> encodeLineEnd) xs
+    <> encodeLineEnd    
+
 encodeBody :: Body -> BSB.Builder
 encodeBody (Body x) = BSB.lazyByteString x
 
@@ -268,3 +290,58 @@ updateTime timeVar now = do
     previousTimeMaybe <- readTVar timeVar
     writeTVar timeVar (Just now)
     return $ Time.diffUTCTime now <$> previousTimeMaybe
+
+data Chunk = Chunk ChunkSize ChunkData
+
+data ChunkSize = ChunkSize Natural
+
+data ChunkData = ChunkData ByteString
+
+transferEncoding :: FieldName
+transferEncoding = FieldName [A.string|Transfer-Encoding|]
+
+chunked :: FieldValue
+chunked = FieldValue [A.string|chunked|]
+
+transferEncodingChunked :: Field
+transferEncodingChunked = Field transferEncoding chunked
+
+dataChunk :: ChunkData -> Chunk
+dataChunk chunkData = Chunk (chunkDataSize chunkData) chunkData
+
+chunkDataSize :: ChunkData -> ChunkSize
+chunkDataSize (ChunkData bs) = case toIntegralSized @Int @Natural (BS.length bs) of
+    Just n -> ChunkSize n
+    Nothing -> error (T.pack "BS.length is always Natural")
+
+
+encodeChunk :: Chunk -> BSB.Builder
+encodeChunk (Chunk chunkSize chunkData) =
+    encodeChunkSize chunkSize <> encodeLineEnd <>
+    encodeChunkData chunkData <> encodeLineEnd
+
+encodeChunkSize :: ChunkSize -> BSB.Builder
+encodeChunkSize (ChunkSize x) = A.showIntegralHexadecimal A.LowerCase x
+
+encodeLastChunk :: BSB.Builder
+encodeLastChunk = encodeChunkSize (ChunkSize 0) <> encodeLineEnd
+
+encodeChunkData :: ChunkData -> BSB.Builder
+encodeChunkData (ChunkData x) = BSB.byteString x
+
+fileStreaming :: IO ()
+fileStreaming = do
+    dir <- getDataDir
+    serve @IO HostAny "8000" \(s, _) -> runResourceT @IO do
+        (_, h) <- binaryFileResource (dir </> "stream.txt") ReadMode
+        liftIO do
+            sendBSB s (encodeStatusLine (status ok))
+            sendBSB s (encodeFieldList [transferEncodingChunked])
+            repeatUntil (BS.hGetSome h 1_024) BS.null \c ->
+                sendBSB s (encodeChunk (dataChunk (ChunkData c)))
+            sendBSB s encodeLastChunk
+            sendBSB s (encodeFieldList [])
+
+
+sendBSB :: Socket -> BSB.Builder -> IO ()
+sendBSB s bs = Net.sendLazy s (BSB.toLazyByteString bs)                
