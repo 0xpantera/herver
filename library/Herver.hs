@@ -2,32 +2,35 @@ module Herver where
 
 import Relude
 
-import Control.Monad.Trans.Resource (ReleaseKey, ResourceT, allocate, runResourceT)
-
-import qualified Data.Text as T
-import qualified Data.Text.Lazy as LT
-import qualified Data.Text.Lazy.Builder as TB
-import qualified Data.Text.Lazy.Builder.Int as TB
-import qualified Data.Text.Lazy.Encoding as LT
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BSB
-import qualified Data.ByteString.Lazy as LBS
-
-import System.FilePath ((</>))
-import qualified System.IO as IO
-import qualified System.Directory as Dir
-import Network.Socket (Socket)
-
-import Network.Simple.TCP (serve, HostPreference (..))
-import qualified Network.Simple.TCP as Net
-
 import ASCII (ASCII)
 import ASCII.Decimal (Digit (..))
 import qualified ASCII as A
 import qualified ASCII.Char as A
 
 import qualified Control.Concurrent.Async as Async
+import Control.Monad.Trans.Resource (ReleaseKey, ResourceT, allocate, runResourceT)
+
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BSB
+import qualified Data.ByteString.Lazy as LBS
+
 import qualified Data.Time as Time
+
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as LT
+import qualified Data.Text.Lazy.Builder as TB
+import qualified Data.Text.Lazy.Builder.Int as TB
+import qualified Data.Text.Lazy.Encoding as LT
+
+import Network.Socket (Socket)
+import Network.Simple.TCP (serve, HostPreference (..))
+import qualified Network.Simple.TCP as Net
+
+import Pipes (Producer, Consumer, Pipe, (>->), yield, await, runEffect)
+
+import System.FilePath ((</>))
+import qualified System.Directory as Dir
+import qualified System.IO as IO
 
 
 getDataDir :: IO FilePath
@@ -344,4 +347,118 @@ fileStreaming = do
 
 
 sendBSB :: Socket -> BSB.Builder -> IO ()
-sendBSB s bs = Net.sendLazy s (BSB.toLazyByteString bs)                
+sendBSB s bs = Net.sendLazy s (BSB.toLazyByteString bs)
+
+data MaxChunkSize = MaxChunkSize Int
+
+data StreamingResponse = StreamingResponse StatusLine [Field] (Maybe ChunkedBody)
+
+data ChunkedBody = ChunkedBody (Producer Chunk IO ())
+
+hStreamingResponse :: Handle -> MaxChunkSize -> StreamingResponse
+hStreamingResponse h maxChunkSize = StreamingResponse statusLine fields (Just body)
+    where
+        statusLine = status ok
+        fields = [transferEncodingChunked]
+        body = chunkedBody (hChunks h maxChunkSize)
+
+hChunks :: Handle -> MaxChunkSize -> Producer ByteString IO ()
+hChunks h (MaxChunkSize mcs) = proceed
+    where
+        proceed = do
+            chunk <- liftIO (BS.hGetSome h mcs)
+            case BS.null chunk of
+                True -> return ()
+                False -> do
+                    yield chunk
+                    proceed
+
+chunkedBody :: Producer ByteString IO () -> ChunkedBody                    
+chunkedBody xs = ChunkedBody (xs >-> stringsToChunks)
+
+stringsToChunks :: Pipe ByteString Chunk IO ()
+stringsToChunks = 
+    forever do
+        bs <- await
+        yield (dataChunk (ChunkData bs))
+
+build :: Pipe BSB.Builder ByteString IO ()
+build = forever do
+    bsb <- await
+    let chunks = LBS.toChunks (BSB.toLazyByteString bsb)
+    for_ chunks \x ->
+        yield x
+
+
+encodeStreamingResponse (StreamingResponse statusLine headers bodyMaybe) =
+    do
+        yield (encodeStatusLine statusLine)
+        yield (encodeFieldList headers)
+        for_ bodyMaybe \(ChunkedBody body) -> do
+            body >-> encodeChunks
+            yield encodeLastChunk
+            yield (encodeFieldList []) -- Trailer fields
+    >-> build
+
+encodeChunks :: Pipe Chunk BSB.Builder IO ()
+encodeChunks =
+    forever do
+        chunk <- await
+        yield (encodeChunk chunk)
+
+sendStreamingResponse :: Socket -> StreamingResponse -> IO ()
+sendStreamingResponse s r = runEffect @IO (encodeStreamingResponse r >-> toSocket s)
+
+toSocket :: Socket -> Consumer ByteString IO ()
+toSocket s =
+    forever do
+        x <- await
+        liftIO $ Net.send s x
+
+produceUntil ::
+    IO chunk           -- ^ Producer of chunks
+    -> (chunk -> Bool) -- ^ Does chunk indicate end of file?
+    -> Producer chunk IO ()
+produceUntil getChunk isEnd = proceed
+    where
+        proceed = do
+            c <- liftIO getChunk
+            if isEnd c
+            then return ()
+            else yield c; proceed
+
+hChunks' :: Handle -> MaxChunkSize -> Producer ByteString IO ()
+hChunks' h (MaxChunkSize mcs) = produceUntil (BS.hGetSome h mcs) BS.null
+
+
+copyGreetingStream :: IO ()
+copyGreetingStream = runResourceT @IO do
+    dir <- liftIO getDataDir
+    (_, h1) <- binaryFileResource (dir </> "greeting.txt") ReadMode
+    (_, h2) <- binaryFileResource (dir </> "greeting2.txt") WriteMode
+    liftIO (hCopy h1 h2)
+
+hCopy :: Handle -> Handle -> IO ()
+hCopy src dest = runEffect @IO (producer >-> consumer)
+    where
+        producer = hChunks' src (MaxChunkSize 1_024)
+        consumer = forever do
+            bs <- await
+            liftIO $ BS.hPutStr dest bs
+
+fileCopyMany :: FilePath -> [FilePath] -> IO ()
+fileCopyMany src dests = runResourceT @IO do
+    (_, hSrc) <- binaryFileResource src ReadMode
+    hDests <- forM dests \fp -> do
+        (_, h) <- binaryFileResource fp WriteMode
+        return h
+    liftIO (hCopyMany hSrc hDests)
+
+hCopyMany :: Handle -> [Handle] -> IO ()
+hCopyMany src dests = runEffect @IO (producer >-> consumer)
+    where
+        producer = hChunks' src (MaxChunkSize 1_024)
+        consumer = forever do
+            chunk <- await
+            liftIO $ for_ dests \dest ->
+                BS.hPutStr dest chunk
