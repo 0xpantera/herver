@@ -10,19 +10,26 @@ import qualified ASCII.Char as A
 import qualified Control.Concurrent.Async as Async
 import Control.Monad.Trans.Resource (ReleaseKey, ResourceT, allocate, runResourceT)
 
+import qualified Data.Attoparsec.ByteString as P
+import qualified Data.Attoparsec.ByteString.Run as P
+import Data.Attoparsec.ByteString (Parser, (<?>))
+
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BSB
 import qualified Data.ByteString.Lazy as LBS
 
-import qualified Data.Time as Time
+import qualified Data.Map.Strict as Map
 
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Builder as TB
 import qualified Data.Text.Lazy.Builder.Int as TB
 import qualified Data.Text.Lazy.Encoding as LT
+import qualified Data.Time as Time
 
 import Network.Socket (Socket)
+import qualified Network.Socket as S
+import qualified Network.Socket.ByteString as S
 import Network.Simple.TCP (serve, HostPreference (..))
 import qualified Network.Simple.TCP as Net
 
@@ -462,3 +469,123 @@ hCopyMany src dests = runEffect @IO (producer >-> consumer)
             chunk <- await
             liftIO $ for_ dests \dest ->
                 BS.hPutStr dest chunk
+
+data ResourceName = ResourceName Text deriving (Eq, Ord)
+
+data ResourceMap = ResourceMap (Map ResourceName FilePath)
+
+resourceMap :: FilePath -> ResourceMap
+resourceMap dir = ResourceMap $ Map.fromList
+    [ (streamResource, dir </> "stream.txt"),
+      (readResource, dir </> "read.txt") ]
+
+streamResource :: ResourceName
+streamResource = ResourceName (T.pack "/stream")
+
+readResource :: ResourceName
+readResource = ResourceName (T.pack "/read")
+
+countString :: ByteString
+countString = [A.string|one-two-three-four|]
+
+spaceParser :: Parser ByteString
+spaceParser = P.string (A.fromCharList [A.Space])
+
+lineEndParser :: Parser ByteString
+lineEndParser = P.string (A.fromCharList crlf)
+
+methodParser :: Parser Method
+methodParser = do
+    x <- tokenParser
+    return (Method x)
+
+
+tokenParser = do
+    bs <- P.takeWhile1 isTchar
+    case A.convertStringMaybe bs of
+        Just asciiBS -> return asciiBS
+        Nothing -> fail "Non-ASCII tchar"
+
+isTchar :: Word8 -> Bool
+isTchar c = elem c tcharSymbols || A.isDigit c || A.isLetter c
+
+tcharSymbols :: [Word8]
+tcharSymbols = A.fromCharList [ A.ExclamationMark, A.NumberSign, A.DollarSign,
+    A.PercentSign, A.Ampersand, A.Apostrophe, A.Asterisk, A.PlusSign, A.HyphenMinus,
+    A.FullStop, A.Caret, A.Underscore, A.GraveAccent, A.VerticalLine, A.Tilde ]
+
+requestTargetParser :: Parser RequestTarget
+requestTargetParser = do
+    bs <- P.takeWhile1 A.isVisible
+    case A.convertStringMaybe bs of
+        Just asciiBS -> return (RequestTarget asciiBS)
+        Nothing -> fail "Non-ASCII vchar"
+
+versionParser :: Parser Version
+versionParser = do
+    _ <- P.string [A.string|HTTP|] <|> fail "Version should start with HTTP"
+    _ <- P.string (A.fromCharList [A.Slash]) <|> fail "HTTP should be followed by a slash"
+    x <- digitParser <?> "Digit"
+    _ <- P.string (A.fromCharList [A.FullStop]) <|> fail "First digit should be followed by full stop"
+    y <- digitParser <?> "Digit"
+    return (Version x y)
+
+digitParser :: Parser Digit
+digitParser = do
+    x <- P.anyWord8
+    case A.isDigit x of
+        True  -> return (A.word8ToDigitUnsafe x)
+        False -> fail "0-9 expected"
+
+requestLineParser :: Parser RequestLine
+requestLineParser = do
+    method  <- methodParser        <?> "Method"
+    _       <- spaceParser         <|> fail "Method should be followed by a space"
+    target  <- requestTargetParser <?> "Target"
+    _       <- spaceParser         <|> fail "Target should be followed by a space"
+    version <- versionParser       <?> "Version"
+    _       <- lineEndParser       <|> fail "Version should be followed by end of line"
+    return (RequestLine method target version)
+
+data Input = Input (P.RestorableInput IO ByteString)
+
+parseFromSocket :: Socket -> MaxChunkSize -> IO Input
+parseFromSocket s (MaxChunkSize mcs) = do
+    i <- P.newRestorableIO (S.recv s mcs)
+    return (Input i)
+
+readRequestLine :: Input -> IO RequestLine
+readRequestLine (Input i) = do
+    result <- P.parseAndRestore i (requestLineParser <?> "Request line")
+    case result of
+        Left parseError -> fail (P.showParseError parseError)
+        Right requestLine -> return requestLine
+
+-- one-time setup part. Construct the resource Map
+resourceServer :: IO ()
+resourceServer = do
+    dir <- getDataDir
+    let resources = resourceMap dir
+    let maxChunkSize = MaxChunkSize 1_024
+    serve @IO HostAny "8000" \(s, _) -> serveResourceOnce resources maxChunkSize s
+
+-- Specifies what we do in each incoming connection
+serveResourceOnce :: ResourceMap -> MaxChunkSize -> Socket -> IO ()
+serveResourceOnce resources maxChunkSize s = runResourceT @IO do
+    i <- liftIO $ parseFromSocket s maxChunkSize
+    RequestLine _ target _ <- liftIO (readRequestLine i)
+    filePath <- liftIO (getTargetFilePath resources target)
+    (_, h) <- binaryFileResource filePath ReadMode
+    let r = hStreamingResponse h maxChunkSize
+    liftIO (sendStreamingResponse s r)
+
+getTargetFilePath :: ResourceMap -> RequestTarget -> IO FilePath
+getTargetFilePath rs target =
+    case targetFilePathMaybe rs target of
+        Nothing -> fail "not found"
+        Just fp -> return fp
+
+targetFilePathMaybe :: ResourceMap -> RequestTarget -> Maybe FilePath
+targetFilePathMaybe (ResourceMap rs) (RequestTarget target) = Map.lookup r rs
+    where
+        r = ResourceName (A.asciiByteStringToText target)        
